@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: zenith
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: YOUR_DOCKER_REGISTRY/backend:latest # UPDATE THIS BEFORE DEPLOYING
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: zenith-config
+            - secretRef:
+                name: zenith-secret
+          # Note: If MONGODB_URL is different locally, configMap overrides it
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: zenith
+spec:
+  # Using LoadBalancer to expose the backend API, or you can use an Ingress.
+  # For simple GKE setups, this provisions an external IP.
+  type: LoadBalancer
+  selector:
+    app: backend
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000

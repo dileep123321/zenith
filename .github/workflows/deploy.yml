@@ -1,0 +1,230 @@
+name: CI/CD → GKE Deploy
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PROJECT_ID: sudharshan-480715
+  REGION: us-central1
+  GAR_LOCATION: us-central1-docker.pkg.dev
+  REPOSITORY: zenith-repo
+  CLUSTER: zenith-cluster
+  CLUSTER_ZONE: us-central1-a
+  NAMESPACE: zenith
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  # JOB 1: Run Tests
+  # ─────────────────────────────────────────────────────────
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Backend – Install & Test
+        run: |
+          cd backend
+          npm install
+          npm test
+
+      - name: Frontend – Install & Test
+        run: |
+          cd frontend
+          npm install
+          # npm test   # Uncomment when frontend tests are stable
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 2: Build & Push Docker Images
+  # ─────────────────────────────────────────────────────────
+  build:
+    name: Build & Push Images
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ github.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Authorize Docker to push to Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GAR_LOCATION }} --quiet
+
+      - name: Build & Push Backend Image
+        run: |
+          docker build \
+            -t ${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/backend:${{ github.sha }} \
+            -t ${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/backend:latest \
+            ./backend
+          docker push ${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/backend:${{ github.sha }}
+          docker push ${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/backend:latest
+
+      - name: Build & Push Frontend Image
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }} \
+            -t ${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/frontend:${{ github.sha }} \
+            -t ${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/frontend:latest \
+            ./frontend
+          docker push ${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/frontend:${{ github.sha }}
+          docker push ${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/frontend:latest
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 3: Deploy to GKE
+  # ─────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to GKE
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install kubectl via gcloud
+        run: gcloud components install kubectl --quiet
+
+      - name: Connect kubectl to GKE Cluster
+        run: |
+          gcloud container clusters get-credentials ${{ env.CLUSTER }} \
+            --zone ${{ env.CLUSTER_ZONE }} \
+            --project ${{ env.PROJECT_ID }}
+
+      - name: Update image tags in manifests
+        run: |
+          # Replace placeholder image tags in backend & frontend manifests with the SHA
+          sed -i "s|YOUR_DOCKER_REGISTRY/backend:latest|${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/backend:${{ github.sha }}|g" k8s/backend.yaml
+          sed -i "s|YOUR_DOCKER_REGISTRY/frontend:latest|${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/frontend:${{ github.sha }}|g" k8s/frontend.yaml
+
+      - name: Update secrets manifest with real values
+        run: |
+          sed -i "s|this-is-a-very-secret-key-for-development|${{ secrets.JWT_SECRET }}|g" k8s/secrets.yaml
+
+      - name: Apply all Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/secrets.yaml
+          kubectl apply -f k8s/mongodb.yaml
+          kubectl apply -f k8s/redis.yaml
+          kubectl apply -f k8s/backend.yaml
+          kubectl apply -f k8s/frontend.yaml
+
+      - name: Wait for deployments to be ready
+        run: |
+          kubectl rollout status deployment/backend -n ${{ env.NAMESPACE }} --timeout=120s
+          kubectl rollout status deployment/frontend -n ${{ env.NAMESPACE }} --timeout=120s
+
+      - name: Show service endpoints
+        run: kubectl get svc -n ${{ env.NAMESPACE }}
+
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: us-central1
+  GAR_LOCATION: us-central1-docker.pkg.dev
+  REPOSITORY: saas-apps
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Backend Tests
+        run: |
+          cd backend
+          npm install
+          # npm test # Uncomment when tests are implemented
+
+      - name: Frontend Tests
+        run: |
+          cd frontend
+          npm install
+          # npm test # Uncomment when tests are implemented
+
+  build-and-deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Google Auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      - name: 'Docker Auth'
+        run: gcloud auth configure-docker ${{ env.GAR_LOCATION }}
+
+      - name: Build and Push Backend
+        run: |
+          docker build -t ${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/backend:${{ github.sha }} ./backend
+          docker push ${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/backend:${{ github.sha }}
+
+      - name: Build and Push Frontend
+        run: |
+          docker build -t ${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/frontend:${{ github.sha }} ./frontend
+          docker push ${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/frontend:${{ github.sha }}
+
+      - name: Deploy Backend to Cloud Run
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        with:
+          service: 'backend-service'
+          image: '${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/backend:${{ github.sha }}'
+          region: '${{ env.REGION }}'
+          env_vars: |
+            NODE_ENV=production
+            PORT=5000
+            MONGODB_URL=${{ secrets.MONGODB_URL }}
+            REDIS_URL=${{ secrets.REDIS_URL }}
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+
+      - name: Deploy Frontend to Cloud Run
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        with:
+          service: 'frontend-service'
+          image: '${{ env.GAR_LOCATION }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/frontend:${{ github.sha }}'
+          region: '${{ env.REGION }}'
+          env_vars: |
+            NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}

@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: zenith
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: YOUR_DOCKER_REGISTRY/frontend:latest # UPDATE THIS BEFORE DEPLOYING
+          ports:
+            - containerPort: 3000
+          # The frontend build usually bakes NEXT_PUBLIC_API_URL into the image
+          # but we can try to pass it via env if it reads it at runtime
+          envFrom:
+            - configMapRef:
+                name: zenith-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: zenith
+spec:
+  type: LoadBalancer
+  selector:
+    app: frontend
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
