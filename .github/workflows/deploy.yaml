@@ -1,161 +1,184 @@
 name: CI/CD → GKE Deploy
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+push:
+branches: [ main ]
+pull_request:
+branches: [ main ]
 
 permissions:
-  contents: read
-  id-token: write 
+contents: read
+id-token: write
 
 env:
-  PROJECT_ID: sudharshan-480715
-  REGION: us-central1
-  GAR_LOCATION: us-central1-docker.pkg.dev
-  REPOSITORY: zenith-repo
-  CLUSTER: zenith-cluster
-  CLUSTER_ZONE: us-central1-a
-  NAMESPACE: zenith
+PROJECT_ID: sudharshan-480715
+REGION: us-central1
+GAR_LOCATION: us-central1-docker.pkg.dev
+REPOSITORY: zenith-repo
+CLUSTER: zenith-cluster
+CLUSTER_ZONE: us-central1-a
+NAMESPACE: zenith
 
 jobs:
 
-# -------------------------------
+# --------------------------------
+
 # JOB 1 — Run Tests
-# -------------------------------
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
+# --------------------------------
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+test:
+name: Run Tests
+runs-on: ubuntu-latest
 
-      - name: Backend Install & Test
-        run: |
-          cd backend
-          npm install
-          npm test || true
+```
+steps:
+  - uses: actions/checkout@v4
 
-      - name: Frontend Install
-        run: |
-          cd frontend
-          npm install
+  - name: Setup Node
+    uses: actions/setup-node@v4
+    with:
+      node-version: 20
 
+  - name: Backend Install & Test
+    run: |
+      cd backend
+      npm install
+      npm test || true
 
-# -------------------------------
+  - name: Frontend Install
+    run: |
+      cd frontend
+      npm install
+```
+
+# --------------------------------
+
 # JOB 2 — Build & Push Images
-# -------------------------------
-  build:
-    name: Build and Push Images
-    needs: test
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
 
-    steps:
+# --------------------------------
 
-      - uses: actions/checkout@v4
+build:
+name: Build and Push Images
+needs: test
+if: github.event_name == 'push'
+runs-on: ubuntu-latest
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: projects/850202233476/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: zenith-github-sa@sudharshan-480715.iam.gserviceaccount.com
+```
+steps:
 
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
+  - uses: actions/checkout@v4
 
-      - name: Configure Docker
-        run: |
-          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+  - name: Authenticate to Google Cloud
+    uses: google-github-actions/auth@v2
+    with:
+      workload_identity_provider: projects/850202233476/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+      service_account: zenith-github-sa@sudharshan-480715.iam.gserviceaccount.com
 
-      # Backend image
-      - name: Build Backend
-        run: |
-          docker build \
-            -t $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/backend:${{ github.sha }} \
-            -t $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/backend:latest \
-            ./backend
+  - name: Setup gcloud
+    uses: google-github-actions/setup-gcloud@v2
 
-      - name: Push Backend
-        run: |
-          docker push $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/backend:${{ github.sha }}
-          docker push $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/backend:latest
+  - name: Configure Docker
+    run: |
+      gcloud auth configure-docker $GAR_LOCATION --quiet
 
-      # Frontend image
-      - name: Build Frontend
-        run: |
-          docker build \
-            --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }} \
-            -t $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/frontend:${{ github.sha }} \
-            -t $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/frontend:latest \
-            ./frontend
+  # -----------------------------
+  # Build Backend Image
+  # -----------------------------
+  - name: Build Backend
+    run: |
+      docker build \
+        -t $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/backend:${{ github.sha }} \
+        -t $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/backend:latest \
+        ./backend
 
-      - name: Push Frontend
-        run: |
-          docker push $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/frontend:${{ github.sha }}
-          docker push $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/frontend:latest
+  - name: Push Backend
+    run: |
+      docker push $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/backend:${{ github.sha }}
+      docker push $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/backend:latest
 
 
-# -------------------------------
+  # -----------------------------
+  # Build Frontend Image
+  # -----------------------------
+  - name: Build Frontend
+    run: |
+      docker build \
+        --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }} \
+        -t $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/frontend:${{ github.sha }} \
+        -t $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/frontend:latest \
+        ./frontend
+
+  - name: Push Frontend
+    run: |
+      docker push $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/frontend:${{ github.sha }}
+      docker push $GAR_LOCATION/$PROJECT_ID/$REPOSITORY/frontend:latest
+```
+
+# --------------------------------
+
 # JOB 3 — Deploy to GKE
-# -------------------------------
-  deploy:
-    name: Deploy to GKE
-    needs: build
-    runs-on: ubuntu-latest
 
-    steps:
+# --------------------------------
 
-      - uses: actions/checkout@v4
+deploy:
+name: Deploy to GKE
+needs: build
+runs-on: ubuntu-latest
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: projects/850202233476/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: zenith-github-sa@sudharshan-480715.iam.gserviceaccount.com
+```
+steps:
 
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
+  - uses: actions/checkout@v4
 
-      - name: Install kubectl
-        run: |
-          gcloud components install kubectl --quiet
+  - name: Authenticate to Google Cloud
+    uses: google-github-actions/auth@v2
+    with:
+      workload_identity_provider: projects/850202233476/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+      service_account: zenith-github-sa@sudharshan-480715.iam.gserviceaccount.com
 
-      - name: Connect to GKE
-        run: |
-          gcloud container clusters get-credentials $CLUSTER \
-          --zone $CLUSTER_ZONE \
-          --project $PROJECT_ID
+  - name: Setup gcloud
+    uses: google-github-actions/setup-gcloud@v2
 
-      - name: Update Image Tags
-        run: |
-          sed -i "s|YOUR_DOCKER_REGISTRY/backend:latest|$GAR_LOCATION/$PROJECT_ID/$REPOSITORY/backend:${{ github.sha }}|g" k8s/backend.yaml
-          sed -i "s|YOUR_DOCKER_REGISTRY/frontend:latest|$GAR_LOCATION/$PROJECT_ID/$REPOSITORY/frontend:${{ github.sha }}|g" k8s/frontend.yaml
+  - name: Install kubectl
+    run: gcloud components install kubectl --quiet
 
-      - name: Inject Secrets
-        run: |
-          sed -i "s|this-is-a-very-secret-key-for-development|${{ secrets.JWT_SECRET }}|g" k8s/secrets.yaml
+  - name: Connect to GKE
+    run: |
+      gcloud container clusters get-credentials $CLUSTER \
+      --zone $CLUSTER_ZONE \
+      --project $PROJECT_ID
 
-      - name: Deploy to Kubernetes
-        run: |
-          kubectl apply -f k8s/namespace.yaml
-          kubectl apply -f k8s/configmap.yaml
-          kubectl apply -f k8s/secrets.yaml
-          kubectl apply -f k8s/mongodb.yaml
-          kubectl apply -f k8s/redis.yaml
-          kubectl apply -f k8s/backend.yaml
-          kubectl apply -f k8s/frontend.yaml
+  # Replace placeholder images
+  - name: Update Image Tags
+    run: |
+      sed -i "s|YOUR_DOCKER_REGISTRY/backend:latest|$GAR_LOCATION/$PROJECT_ID/$REPOSITORY/backend:${{ github.sha }}|g" k8s/backend.yaml
+      sed -i "s|YOUR_DOCKER_REGISTRY/frontend:latest|$GAR_LOCATION/$PROJECT_ID/$REPOSITORY/frontend:${{ github.sha }}|g" k8s/frontend.yaml
 
-      - name: Wait for Deployments
-        run: |
-          kubectl rollout status deployment/backend -n $NAMESPACE --timeout=180s
-          kubectl rollout status deployment/frontend -n $NAMESPACE --timeout=180s
+  - name: Inject Secrets
+    run: |
+      sed -i "s|this-is-a-very-secret-key-for-development|${{ secrets.JWT_SECRET }}|g" k8s/secrets.yaml
 
-      - name: Show Services
-        run: kubectl get svc -n $NAMESPACE
+  # Deploy resources
+  - name: Deploy to Kubernetes
+    run: |
+      kubectl apply -f k8s/namespace.yaml
+      kubectl apply -f k8s/configmap.yaml
+      kubectl apply -f k8s/secrets.yaml
+      kubectl apply -f k8s/mongodb.yaml
+      kubectl apply -f k8s/redis.yaml
+      kubectl apply -f k8s/backend.yaml
+      kubectl apply -f k8s/frontend.yaml
+
+  - name: Restart Deployments
+    run: |
+      kubectl rollout restart deployment/backend -n $NAMESPACE
+      kubectl rollout restart deployment/frontend -n $NAMESPACE
+
+  - name: Wait for Deployments
+    run: |
+      kubectl rollout status deployment/backend -n $NAMESPACE --timeout=180s
+      kubectl rollout status deployment/frontend -n $NAMESPACE --timeout=180s
+
+  - name: Show Services
+    run: kubectl get svc -n $NAMESPACE
