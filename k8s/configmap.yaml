@@ -10,4 +10,4 @@ data:
   REDIS_URL: "redis://redis:6379"
   JWT_ACCESS_EXPIRATION_MINUTES: "30"
   JWT_REFRESH_EXPIRATION_DAYS: "30"
-  NEXT_PUBLIC_API_URL: "http://backend:5000/v1" # This needs to be the external IP of the backend or updated in the frontend ingress
+  NEXT_PUBLIC_API_URL: "http://34.71.204.194:5000/v1" # Updated to external IP for browser access
